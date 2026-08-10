@@ -149,7 +149,11 @@ class StewardNodes:
                         sheet=view,
                         expected="On Order",
                         actual=source,
-                        repair={"kind": "restore_derived_reference", "sheet": view, "source": "On Order"},
+                        repair={
+                            "kind": "restore_derived_reference",
+                            "sheet": view,
+                            "source": "On Order",
+                        },
                     )
                 )
 
@@ -189,7 +193,11 @@ class StewardNodes:
                     placements[source_id].append(stage)
 
                 status = str(record.get("status") or "").strip()
-                allowed = contract.ORDER_STATUSES if stage == "On Order" else contract.READY_STATUSES
+                allowed = (
+                    contract.ORDER_STATUSES
+                    if stage == "On Order"
+                    else contract.READY_STATUSES
+                )
                 if stage != "Builder Import" and status not in allowed:
                     findings.append(
                         finding(
@@ -285,12 +293,13 @@ class StewardNodes:
         findings: list[Finding] = []
         for record in snapshot.get("source_evidence", []):
             if record.get("link_expected") and not record.get("link_present"):
+                source_build_id = record.get("source_build_id", "unknown build")
                 findings.append(
                     finding(
                         "missing_source_evidence",
                         "evidence",
                         "needs_review",
-                        f"Saved source evidence is missing for {record.get('source_build_id', 'unknown build')}.",
+                        f"Saved source evidence is missing for {source_build_id}.",
                         expected="readable submitted-build link",
                         actual=record.get("source_ref"),
                     )
@@ -380,7 +389,9 @@ class StewardNodes:
         findings = state.get("findings", [])
         changes = state.get("applied_changes", [])
         unresolved = state.get("unresolved", [])
-        unapplied = bool(state.get("repair_plan")) and not state["request"].get("apply_repairs", False)
+        unapplied = bool(state.get("repair_plan")) and not state["request"].get(
+            "apply_repairs", False
+        )
         if unresolved or state.get("blocked") or state.get("error") or unapplied:
             health = "Needs Review"
         elif changes:
