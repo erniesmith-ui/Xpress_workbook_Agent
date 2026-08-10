@@ -3,7 +3,12 @@ from __future__ import annotations
 from copy import deepcopy
 
 from xpress_agent import build_graph
-from xpress_agent.contract import MANAGED_SHEETS, PARSER_VERSION, PORTAL_PAYLOAD_FIELDS, SPREADSHEET_ID
+from xpress_agent.contract import (
+    MANAGED_SHEETS,
+    PARSER_VERSION,
+    PORTAL_PAYLOAD_FIELDS,
+    SPREADSHEET_ID,
+)
 from xpress_agent.state import AuditRequest, ChangeRecord, WorkbookSnapshot
 
 
@@ -122,4 +127,3 @@ def test_unapplied_clear_repair_is_reported_for_review() -> None:
     assert result["health"] == "Needs Review"
     assert result["repair_plan"]
     assert gateway.repairs == []
-
