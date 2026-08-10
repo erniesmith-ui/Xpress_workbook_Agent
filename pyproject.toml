@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "xpress-workbook-agent"
+version = "0.1.0"
+description = "Graph-engineered steward for the Xpress boat-orders workbook"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["langgraph>=1.0,<2.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0,<9.0", "ruff>=0.12,<1.0"]
+
+[project.scripts]
+xpress-agent = "xpress_agent.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/xpress_agent"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
