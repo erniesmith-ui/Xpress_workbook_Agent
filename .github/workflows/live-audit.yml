@@ -1,0 +1,49 @@
+name: Live Workbook Audit
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 13 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install production audit dependencies
+        run: uv sync --extra google
+
+      - name: Configure Google credentials
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.XPRESS_GOOGLE_CREDENTIALS }}
+        run: |
+          if [ -z "$GOOGLE_CREDENTIALS_JSON" ]; then
+            echo "Missing repository secret XPRESS_GOOGLE_CREDENTIALS" >&2
+            exit 1
+          fi
+          printf '%s' "$GOOGLE_CREDENTIALS_JSON" > "$RUNNER_TEMP/google-credentials.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/google-credentials.json" >> "$GITHUB_ENV"
+
+      - name: Run read-only live audit
+        run: uv run xpress-agent --live --trigger scheduled | tee live-audit-report.json
+
+      - name: Publish audit summary
+        run: |
+          echo '## Xpress live workbook audit' >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat live-audit-report.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: xpress-live-audit-${{ github.run_number }}
+          path: live-audit-report.json
+          retention-days: 30
