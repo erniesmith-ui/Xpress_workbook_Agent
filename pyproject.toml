@@ -12,6 +12,7 @@ dependencies = ["langgraph>=1.0,<2.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0,<9.0", "ruff>=0.12,<1.0"]
+google = ["google-api-python-client>=2.0,<3.0", "google-auth>=2.0,<3.0"]
 
 [project.scripts]
 xpress-agent = "xpress_agent.cli:main"
@@ -29,4 +30,3 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
-
