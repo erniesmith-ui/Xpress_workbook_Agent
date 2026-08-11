@@ -12,6 +12,7 @@ _SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
 _DATA_END_ROW = contract.DATA_START_ROW + contract.PRIMARY_TABLE_CAPACITY - 1
 _DRIVE_URL_RE = re.compile(r"https://drive\.google\.com/[^\s]+")
 _SOURCE_RE = re.compile(r"'([^']+)'!")
+_CELL_RE = re.compile(r"^([A-Z]+)(\d+)$")
 
 
 class GoogleSheetsGateway:
@@ -31,9 +32,7 @@ class GoogleSheetsGateway:
             import google.auth
             from googleapiclient.discovery import build
         except ImportError as exc:  # pragma: no cover - depends on optional extra
-            raise RuntimeError(
-                "Install the google extra: uv sync --extra google"
-            ) from exc
+            raise RuntimeError("Install the google extra: uv sync --extra google") from exc
 
         credentials, _ = google.auth.default(scopes=[_SHEETS_SCOPE])
         service = build("sheets", "v4", credentials=credentials, cache_discovery=False)
@@ -42,6 +41,21 @@ class GoogleSheetsGateway:
     def read_snapshot(self, request: AuditRequest) -> WorkbookSnapshot:
         if request.get("spreadsheet_id") != self.spreadsheet_id:
             raise ValueError("Request spreadsheet_id does not match the fixed workbook")
+
+        metadata = (
+            self.service.spreadsheets()
+            .get(
+                spreadsheetId=self.spreadsheet_id,
+                includeGridData=False,
+                fields="sheets.properties(title)",
+            )
+            .execute()
+        )
+        sheet_names = [
+            str(sheet.get("properties", {}).get("title", ""))
+            for sheet in metadata.get("sheets", [])
+            if sheet.get("properties", {}).get("title")
+        ]
 
         ranges = [
             f"'{sheet}'!A{contract.HEADER_ROW}:AJ{_DATA_END_ROW}"
@@ -67,10 +81,6 @@ class GoogleSheetsGateway:
             )
             .execute()
         )
-        sheet_names = [
-            sheet.get("properties", {}).get("title", "")
-            for sheet in response.get("sheets", [])
-        ]
         grids = self._grid_map(response)
 
         records_by_stage = {
@@ -83,9 +93,7 @@ class GoogleSheetsGateway:
 
         snapshot: WorkbookSnapshot = {
             "sheet_names": sheet_names,
-            "header_rows": {
-                name: contract.HEADER_ROW for name in sheet_names if name in contract.MANAGED_SHEETS
-            },
+            "header_rows": self._header_rows(sheet_names, grids),
             "records_by_stage": records_by_stage,
             "formula_defects": self._formula_defects(grids),
             "validation_defects": [],
@@ -110,18 +118,25 @@ class GoogleSheetsGateway:
         if kind == "restore_price_formula":
             cell_range = str(repair.get("range") or "")
             field = str(repair.get("field") or "")
+            self._validate_price_cell(sheet, cell_range, field)
             formula = self._price_formula(sheet, cell_range, field)
         elif kind == "restore_builder_ready_formula":
             cell_range = str(repair.get("range") or "")
-            row = self._row_number(cell_range)
+            column, row = self._parse_cell(cell_range)
+            if sheet != "Builder Import" or column != "AD":
+                raise ValueError("Builder readiness repairs are restricted to Builder Import!AD")
             formula = self._builder_ready_formula(row)
         elif kind == "restore_dashboard_ready_reference":
+            if sheet != "Dashboard":
+                raise ValueError("Dashboard reference repair must target Dashboard")
             cell_range = "B7"
             formula = (
                 "=COUNTIFS('Ready to Order'!I7:I106,\"<>\","
                 "'Ready to Order'!E7:E106,\"Ready to Order\")"
             )
         elif kind == "restore_derived_reference":
+            if sheet not in {"Master Tracker", *contract.LOCATIONS}:
+                raise ValueError("Derived reference repair targets an unsupported view")
             cell_range = "A7"
             formula = self._derived_formula(sheet)
         else:
@@ -150,6 +165,22 @@ class GoogleSheetsGateway:
             data = sheet.get("data", [])
             if title and data:
                 result[str(title)] = data[0].get("rowData", [])
+        return result
+
+    @staticmethod
+    def _header_rows(
+        sheet_names: list[str], grids: dict[str, list[dict[str, Any]]]
+    ) -> dict[str, int]:
+        result: dict[str, int] = {}
+        for name in sheet_names:
+            if name not in contract.MANAGED_SHEETS:
+                continue
+            if name == "Dashboard":
+                result[name] = contract.HEADER_ROW
+                continue
+            rows = grids.get(name, [])
+            if rows and any(cell.get("formattedValue") for cell in rows[0].get("values", [])):
+                result[name] = contract.HEADER_ROW
         return result
 
     def _stage_records(
@@ -226,12 +257,13 @@ class GoogleSheetsGateway:
                     formula = cell.get("userEnteredValue", {}).get("formulaValue")
                     expected = self._builder_ready_formula(row_number)
                     if formula != expected:
+                        message = f"Builder readiness formula is wrong at row {row_number}."
                         findings.append(
                             {
                                 "code": "builder_ready_formula",
                                 "category": "formula",
                                 "disposition": "clear_repair",
-                                "message": f"Builder readiness formula is wrong at row {row_number}.",
+                                "message": message,
                                 "sheet": "Builder Import",
                                 "range": f"AD{row_number}",
                                 "expected": expected,
@@ -270,9 +302,10 @@ class GoogleSheetsGateway:
     def _source_evidence(
         records_by_stage: dict[str, list[dict[str, object]]]
     ) -> list[dict[str, object]]:
-        records = records_by_stage.get("On Order", []) or records_by_stage.get(
-            "Ready to Order", []
-        )
+        records = [
+            *records_by_stage.get("Ready to Order", []),
+            *records_by_stage.get("On Order", []),
+        ]
         result: list[dict[str, object]] = []
         for record in records:
             notes = str(record.get("Notes") or "")
@@ -329,8 +362,32 @@ class GoogleSheetsGateway:
         )
 
     @staticmethod
+    def _validate_price_cell(sheet: str, cell_range: str, field: str) -> None:
+        column, _ = GoogleSheetsGateway._parse_cell(cell_range)
+        columns = {
+            "Builder Import": {
+                "estimated_dealer_cost": "X",
+                "listed_msrp": "Y",
+                "dsrp": "Z",
+            },
+            "Ready to Order": {
+                "estimated_dealer_cost": "R",
+                "listed_msrp": "S",
+                "dsrp": "T",
+            },
+            "On Order": {
+                "estimated_dealer_cost": "R",
+                "listed_msrp": "S",
+                "dsrp": "T",
+            },
+        }
+        expected = columns.get(sheet, {}).get(field)
+        if expected is None or column != expected:
+            raise ValueError("Price repair range does not match its field and sheet")
+
+    @staticmethod
     def _price_formula(sheet: str, cell_range: str, field: str) -> str:
-        row = GoogleSheetsGateway._row_number(cell_range)
+        _, row = GoogleSheetsGateway._parse_cell(cell_range)
         if sheet == "Builder Import":
             formulas = {
                 "estimated_dealer_cost": f'=IF(ISNUMBER(W{row}),W{row}*0.85,"")',
@@ -363,14 +420,14 @@ class GoogleSheetsGateway:
         raise ValueError(f"Unsupported derived view: {sheet}")
 
     @staticmethod
-    def _row_number(cell_range: str) -> int:
-        match = re.search(r"(\d+)$", cell_range)
+    def _parse_cell(cell_range: str) -> tuple[str, int]:
+        match = _CELL_RE.fullmatch(cell_range)
         if not match:
             raise ValueError(f"Repair range must be a single A1 cell: {cell_range}")
-        row = int(match.group(1))
+        row = int(match.group(2))
         if not contract.DATA_START_ROW <= row <= _DATA_END_ROW:
             raise ValueError(f"Repair row is outside the bounded table: {row}")
-        return row
+        return match.group(1), row
 
     @staticmethod
     def _column_name(index: int) -> str:
