@@ -28,10 +28,16 @@ jobs:
             exit 1
           fi
           printf '%s' "$GOOGLE_CREDENTIALS_JSON" > "$RUNNER_TEMP/google-credentials.json"
+          if ! python -m json.tool "$RUNNER_TEMP/google-credentials.json" > /dev/null; then
+            echo "Repository secret XPRESS_GOOGLE_CREDENTIALS is not valid JSON" >&2
+            exit 1
+          fi
           echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/google-credentials.json" >> "$GITHUB_ENV"
 
       - name: Run read-only live audit
-        run: uv run xpress-agent --live --trigger scheduled | tee live-audit-report.json
+        run: |
+          set -o pipefail
+          uv run xpress-agent --live --trigger scheduled | tee live-audit-report.json
 
       - name: Publish audit summary
         run: |
