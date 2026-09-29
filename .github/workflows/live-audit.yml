@@ -43,8 +43,13 @@ jobs:
                   f"{exc}"
               ) from exc
 
-          required = {"type", "client_email", "private_key"}
-          missing = sorted(required.difference(credentials))
+          if not isinstance(credentials, dict):
+              raise SystemExit("XPRESS_GOOGLE_CREDENTIALS must be a service-account JSON object")
+          required = {"type", "client_email", "private_key", "token_uri"}
+          missing = sorted(
+              field for field in required
+              if not isinstance(credentials.get(field), str) or not credentials[field].strip()
+          )
           if credentials.get("type") != "service_account" or missing:
               details = f"; missing fields: {', '.join(missing)}" if missing else ""
               raise SystemExit(
