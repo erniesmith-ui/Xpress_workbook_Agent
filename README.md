@@ -65,8 +65,9 @@ read-only; repairs should remain an attended action after reviewing the audit fi
 
 ## GitHub Actions deployment
 
-`.github/workflows/live-audit.yml` runs the live audit every day at 13:00 UTC and can also be
-started manually with `workflow_dispatch`. It never passes the repair flags. Each run writes the
+Scheduled runs of `.github/workflows/live-audit.yml` are paused pending keyless Google Cloud
+authentication. It can still be started manually with `workflow_dispatch` using the current
+service-account secret. It never passes the repair flags. Each successful run writes the
 JSON report to the GitHub Actions step summary and retains it as an artifact for 30 days.
 
 Create a dedicated Google service account for this agent, grant that account only the spreadsheet
@@ -74,7 +75,8 @@ access it needs, and add its JSON credential document to the repository Actions 
 `XPRESS_GOOGLE_CREDENTIALS`. Do not commit credentials to this repository.
 
 After the secret is configured, manually run **Live Workbook Audit** once and inspect the report
-before relying on the schedule. A missing secret fails closed before workbook access.
+before enabling any schedule. Missing, malformed, or incomplete credentials fail before workbook
+access. A failed audit command or empty report also fails the workflow.
 
 ## Production safety policy
 
